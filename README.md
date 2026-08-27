@@ -12,6 +12,29 @@ dev-environment awareness, a Markdown knowledge base). Everything here started a
 repo and was duplicated out so it can be installed, versioned, and used independently by anyone
 who only cares about Flutter/mobile.
 
+A **Flutter Engineering MCP** gateway (`gateway/mcp_gateway`) sits in front of all twelve: it's
+itself an MCP server, but instead of implementing tools directly, it connects to every server in
+`servers.toml` as an MCP *client* and re-exposes their combined tools behind one MCP endpoint.
+Point an AI agent at the gateway and it gets all twelve servers' tools through a single
+connection instead of twelve separate ones — see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+for the full breakdown (categories, every tool, setup, and example prompts).
+
+```
+                    AI Agent
+                       │
+                Model Context Protocol
+                       │
+                       ▼
+              Flutter Engineering MCP
+       ┌───────────────┼────────────────┐
+   Code Intelligence  Architecture   Test Analysis
+   Crash Analysis     Dependency     Security Scanning
+   Performance        CI/CD          Code Migration
+       └───────────────┼────────────────┘
+                       ▼
+        Flutter Repo · GitHub Actions · Firebase · pub.dev
+```
+
 ## What makes this one different
 
 Each server is a small, independently-installable Python package exposing MCP tools/resources
@@ -63,7 +86,11 @@ Flutter project's source tree, config files, and (where relevant) already-produc
 
 ```mermaid
 flowchart LR
+    Agent[AI agent]
     CLI[mcp-toolkit CLI]
+    GW[Flutter Engineering MCP\ngateway/mcp_gateway]
+
+    Agent -- stdio/JSON-RPC, one connection --> GW
 
     subgraph Servers [MCP servers, spawned over stdio]
         FPI[flutter_project_intelligence]
@@ -88,18 +115,20 @@ flowchart LR
     GH[GitHub Actions API]
     FS[(local filesystem / git)]
 
-    CLI -- stdio/JSON-RPC --> FPI
-    CLI -- stdio/JSON-RPC --> FUT
-    CLI -- stdio/JSON-RPC --> FCA
-    CLI -- stdio/JSON-RPC --> FBC
-    CLI -- stdio/JSON-RPC --> FAG
-    CLI -- stdio/JSON-RPC --> FDM
-    CLI -- stdio/JSON-RPC --> MS
-    CLI -- stdio/JSON-RPC --> AC
-    CLI -- stdio/JSON-RPC --> FTC
-    CLI -- stdio/JSON-RPC --> FP
-    CLI -- stdio/JSON-RPC --> MC
-    CLI -- stdio/JSON-RPC --> FCM
+    CLI -- stdio/JSON-RPC, pick one server --> FPI
+    CLI -- stdio/JSON-RPC, pick one server --> FUT
+    CLI -- stdio/JSON-RPC, pick one server --> FCA
+    CLI -- stdio/JSON-RPC, pick one server --> FBC
+    CLI -- stdio/JSON-RPC, pick one server --> FAG
+    CLI -- stdio/JSON-RPC, pick one server --> FDM
+    CLI -- stdio/JSON-RPC, pick one server --> MS
+    CLI -- stdio/JSON-RPC, pick one server --> AC
+    CLI -- stdio/JSON-RPC, pick one server --> FTC
+    CLI -- stdio/JSON-RPC, pick one server --> FP
+    CLI -- stdio/JSON-RPC, pick one server --> MC
+    CLI -- stdio/JSON-RPC, pick one server --> FCM
+    CLI -- stdio/JSON-RPC --> GW
+    GW -- stdio/JSON-RPC, all 12 as one --> Servers
 
     FPI --> FlutterProj
     FUT --> Device
@@ -154,6 +183,7 @@ pip install -e "servers/flutter_performance[dev]"
 pip install -e "servers/mobile_cicd[dev]"
 pip install -e "servers/flutter_code_migration[dev]"
 pip install -e "cli[dev]"
+pip install -e "gateway[dev]"
 ```
 
 `servers.toml` maps short names to launch commands; `command = "python"` means "whichever
@@ -166,6 +196,10 @@ expansion against your own shell environment — the credential itself never liv
 mcp-toolkit list-servers
 mcp-toolkit list-tools flutterintel
 mcp-toolkit call-tool flutterintel index_project --args '{"project_path": "/path/to/a/flutter/app"}'
+
+# Or through the Flutter Engineering MCP gateway, one connection for all twelve:
+mcp-toolkit list-tools gateway
+mcp-toolkit call-tool gateway flutterintel__index_project --args '{"project_path": "/path/to/a/flutter/app"}'
 ```
 
 ## A deliberate MCP security default worth knowing
@@ -192,10 +226,15 @@ your shell will silently show up inside a spawned server.
 
 ```bash
 cd servers/flutter_project_intelligence && ruff check . && mypy flutter_project_intelligence && pytest -q
-# ...same for every other server (see servers.toml for the full list) and the cli
+# ...same for every other server (see servers.toml for the full list), the cli, and the gateway
 ```
 
-CI runs this matrix (ruff + mypy + pytest) across all twelve servers and the CLI on every push.
+CI runs this matrix (ruff + mypy + pytest) across all twelve servers, the CLI, and the gateway on
+every push. The gateway's own tests include a true end-to-end run that spawns the real gateway
+process, which in turn spawns two real backend servers — confirming the whole chain (agent →
+gateway → backend) actually works over the real protocol, not just each hop in isolation.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full tool reference and setup guide.
 
 ## License
 
